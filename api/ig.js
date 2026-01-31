@@ -16,6 +16,7 @@ async function fetchFromSSS(url) {
     });
     
     const currentMsec = msecRes.data.msec;
+    console.log('✅ Got msec:', currentMsec);
     
     // Step 2: Prepare parameters
     const _ts = 1769598002953; // Base timestamp
@@ -27,6 +28,8 @@ async function fetchFromSSS(url) {
     const signData = `${url}${ts}${_ts}${_tsc}`;
     const _s = crypto.createHash('sha256').update(signData).digest('hex');
     
+    console.log('🔑 Generated signature:', _s.substring(0, 20) + '...');
+    
     // Step 4: Call API
     const params = new URLSearchParams({
       sf_url: url,
@@ -36,6 +39,8 @@ async function fetchFromSSS(url) {
       _s: _s
     });
 
+    console.log('📤 Calling sssinstagram API...');
+    
     const res = await axios.post('https://api-wh.sssinstagram.com/api/convert', params.toString(), {
       headers: {
         'Accept': 'application/json, text/plain, */*',
@@ -44,8 +49,16 @@ async function fetchFromSSS(url) {
         'Referer': 'https://sssinstagram.com/',
         'Origin': 'https://sssinstagram.com'
       },
-      timeout: 15000
+      timeout: 15000,
+      validateStatus: (status) => status < 500 // Accept 4xx errors for better debugging
     });
+
+    console.log('📥 Response status:', res.status);
+    console.log('📥 Response data:', JSON.stringify(res.data).substring(0, 200));
+
+    if (res.status !== 200) {
+      throw new Error(`API returned status ${res.status}: ${JSON.stringify(res.data)}`);
+    }
 
     const json = res.data;
 
@@ -53,6 +66,9 @@ async function fetchFromSSS(url) {
     let urls = [];
     if (json.url && Array.isArray(json.url)) {
       urls = json.url.map(item => item.url).filter(Boolean);
+      console.log(`✅ Found ${urls.length} URLs`);
+    } else {
+      console.error('❌ No urls in response:', json);
     }
 
     // Extract metadata
@@ -68,6 +84,7 @@ async function fetchFromSSS(url) {
         taken_at: json.meta.taken_at || null,
         comments: json.meta.comments || []
       };
+      console.log('✅ Got metadata for:', metadata.username);
     }
 
     // Extract thumbnail
@@ -76,7 +93,11 @@ async function fetchFromSSS(url) {
     return { urls, metadata, thumbnail };
     
   } catch (e) {
-    console.error('sssinstagram error:', e.message);
+    console.error('❌ sssinstagram error:', e.message);
+    if (e.response) {
+      console.error('Response status:', e.response.status);
+      console.error('Response data:', e.response.data);
+    }
     throw new Error(`Failed to fetch from sssinstagram: ${e.message}`);
   }
 }
@@ -269,5 +290,5 @@ export default async function handler(req, res) {
       message: error.message 
     });
   }
-        }
-                      
+                  }
+          
