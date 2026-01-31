@@ -3,105 +3,14 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
-// Function to get download URLs from indown.io
-async function indown(url) {
-  try {
-    // Step 1: Get homepage with proper headers
-    const get = await axios.get('https://indown.io/en1', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Cache-Control': 'max-age=0'
-      }
-    });
-
-    // Extract cookies properly
-    const cookies = get.headers['set-cookie'];
-    if (!cookies || cookies.length === 0) {
-      throw new Error('Failed to get cookies from indown.io');
-    }
-
-    const kukis = cookies.map(v => v.split(';')[0]).join('; ');
-    
-    // Extract CSRF token
-    const $ = cheerio.load(get.data);
-    const token = $('input[name="_token"]').val();
-    
-    if (!token) {
-      throw new Error('Failed to get CSRF token from indown.io');
-    }
-
-    // Step 2: Submit download request
-    const dl = await axios.post('https://indown.io/download',
-      new URLSearchParams({
-        referer: 'https://indown.io/en1',
-        locale: 'en',
-        _token: token,
-        link: url,
-        p: 'i'
-      }).toString(),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Origin': 'https://indown.io',
-          'Referer': 'https://indown.io/en1',
-          'Cookie': kukis,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': '*/*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Sec-Fetch-Dest': 'empty',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Site': 'same-origin'
-        },
-        maxRedirects: 5,
-        timeout: 30000
-      }
-    );
-
-    // Step 3: Parse response and extract URLs
-    const $dl = cheerio.load(dl.data);
-    const urls = $dl('video source[src], a[href]')
-      .map(function(_, e) {
-        let v = $dl(e).attr('src') || $dl(e).attr('href');
-        if (v && v.includes('indown.io/fetch')) {
-          try {
-            v = decodeURIComponent(new URL(v).searchParams.get('url'));
-          } catch (err) {
-            return null;
-          }
-        }
-        if (!v || !/cdninstagram\.com|fbcdn\.net/.test(v)) return null;
-        return v.replace(/&dl=1$/, '');
-      })
-      .get()
-      .filter(function(v, i, a) {
-        return v && a.indexOf(v) === i;
-      });
-
-    return urls.length ? urls : null;
-
-  } catch (e) {
-    console.error('indown.io error:', e.message);
-    throw new Error(`Failed to fetch from indown.io: ${e.message}`);
-  }
-}
-
-// Function to get metadata from sssinstagram.com (with full stats & comments)
-async function getMetadataFromSSS(url) {
+// Function to get download URLs and metadata from sssinstagram.com
+async function fetchFromSSS(url) {
   try {
     // Step 1: Get current timestamp
     const msecRes = await axios.get('https://sssinstagram.com/msec', {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
       },
       timeout: 10000
     });
@@ -109,7 +18,7 @@ async function getMetadataFromSSS(url) {
     const currentMsec = msecRes.data.msec;
     
     // Step 2: Prepare parameters
-    const _ts = 1769598002953; // Base timestamp (from sssinstagram)
+    const _ts = 1769598002953; // Base timestamp
     const _tsc = 0;
     const ts = Math.floor(currentMsec * 1000);
     
@@ -131,7 +40,7 @@ async function getMetadataFromSSS(url) {
       headers: {
         'Accept': 'application/json, text/plain, */*',
         'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': 'https://sssinstagram.com/',
         'Origin': 'https://sssinstagram.com'
       },
@@ -140,10 +49,14 @@ async function getMetadataFromSSS(url) {
 
     const json = res.data;
 
-    let metadata = null;
-    let thumbnail = null;
+    // Extract download URLs
+    let urls = [];
+    if (json.url && Array.isArray(json.url)) {
+      urls = json.url.map(item => item.url).filter(Boolean);
+    }
 
     // Extract metadata
+    let metadata = null;
     if (json.meta) {
       metadata = {
         title: json.meta.title || '',
@@ -158,32 +71,18 @@ async function getMetadataFromSSS(url) {
     }
 
     // Extract thumbnail
-    if (json.thumb) {
-      thumbnail = json.thumb;
-    }
+    let thumbnail = json.thumb || null;
 
-    return { metadata, thumbnail };
+    return { urls, metadata, thumbnail };
     
   } catch (e) {
-    console.error('sssinstagram metadata error:', e.message);
-    return { metadata: null, thumbnail: null };
+    console.error('sssinstagram error:', e.message);
+    throw new Error(`Failed to fetch from sssinstagram: ${e.message}`);
   }
 }
 
-// Function to get metadata by scraping Instagram (fallback)
-async function getMetadata(url) {
-  // Try sssinstagram first (has full metadata with comments)
-  try {
-    const sssResult = await getMetadataFromSSS(url);
-    if (sssResult.metadata) {
-      console.log('✅ Got metadata from sssinstagram.com');
-      return sssResult;
-    }
-  } catch (sssErr) {
-    console.error('sssinstagram failed, falling back to scraping:', sssErr.message);
-  }
-
-  // Fallback: Direct Instagram scraping
+// Function to get metadata by scraping Instagram (fallback only)
+async function getMetadataFallback(url) {
   try {
     const response = await axios.get(url, {
       headers: {
@@ -244,11 +143,10 @@ async function getMetadata(url) {
                  $('meta[property="og:video:thumbnail"]').attr('content') || null;
     }
 
-    console.log('✅ Got metadata from Instagram scraping');
     return { metadata, thumbnail };
     
   } catch (e) {
-    console.error('All metadata methods failed:', e.message);
+    console.error('Metadata scraping error:', e.message);
     return { metadata: null, thumbnail: null };
   }
 }
@@ -287,42 +185,48 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid Instagram URL' });
     }
 
-    // Get download links from indown.io
-    let links = null;
-    let indownError = null;
-    
-    try {
-      links = await indown(url);
-    } catch (indownErr) {
-      indownError = indownErr.message;
-      console.error('indown.io failed:', indownErr.message);
-    }
-
-    if (!links || links.length === 0) {
-      return res.status(500).json({ 
-        error: 'Could not fetch Instagram content',
-        details: indownError || 'No media found. The post might be private or unavailable.',
-        service: 'indown.io'
-      });
-    }
-
-    // Get metadata from Instagram (non-blocking)
+    // Get download links and metadata from sssinstagram.com
+    let urls = null;
     let metadata = null;
     let thumbnail = null;
+    let sssError = null;
     
     try {
-      const metaResult = await getMetadata(url);
-      metadata = metaResult.metadata;
-      thumbnail = metaResult.thumbnail;
-    } catch (metaErr) {
-      console.error('Metadata fetch failed:', metaErr.message);
-      // Continue without metadata
+      const result = await fetchFromSSS(url);
+      urls = result.urls;
+      metadata = result.metadata;
+      thumbnail = result.thumbnail;
+      
+      console.log(`✅ Got ${urls?.length || 0} URLs from sssinstagram`);
+    } catch (sssErr) {
+      sssError = sssErr.message;
+      console.error('sssinstagram failed:', sssErr.message);
+    }
+
+    // If sssinstagram failed, try getting metadata from scraping
+    if (!urls || urls.length === 0) {
+      if (!metadata) {
+        try {
+          const fallbackMeta = await getMetadataFallback(url);
+          metadata = fallbackMeta.metadata;
+          thumbnail = fallbackMeta.thumbnail;
+          console.log('✅ Got metadata from fallback scraping');
+        } catch (metaErr) {
+          console.error('Metadata fallback also failed:', metaErr.message);
+        }
+      }
+      
+      return res.status(500).json({ 
+        error: 'Could not fetch Instagram content',
+        details: sssError || 'No media found. The post might be private or unavailable.',
+        service: 'sssinstagram.com'
+      });
     }
 
     // Determine media types by checking URLs
     const mediaItems = [];
     
-    for (const mediaUrl of links) {
+    for (const mediaUrl of urls) {
       // Check if URL contains video indicators
       const isVideo = /\.mp4/.test(mediaUrl) || 
                      mediaUrl.includes('video') ||
@@ -365,5 +269,5 @@ export default async function handler(req, res) {
       message: error.message 
     });
   }
-      }
-        
+        }
+                      
