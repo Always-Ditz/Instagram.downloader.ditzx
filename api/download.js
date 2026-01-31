@@ -29,9 +29,11 @@ export default async function handler(req, res) {
     const response = await fetch(decodedUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.instagram.com/',
-        'Origin': 'https://www.instagram.com'
-      }
+        'Referer': decodedUrl.includes('sssinstagram') ? 'https://sssinstagram.com/' : 'https://www.instagram.com/',
+        'Origin': decodedUrl.includes('sssinstagram') ? 'https://sssinstagram.com' : 'https://www.instagram.com',
+        'Accept': '*/*'
+      },
+      redirect: 'follow' // Follow redirects from sssinstagram proxy
     });
 
     if (!response.ok) {
@@ -146,5 +148,5 @@ async function streamResponse(fetchResponse, res, contentType, extension) {
   } finally {
     reader.releaseLock();
   }
-}
-  
+  }
+          
