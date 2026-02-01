@@ -65,23 +65,43 @@ async function instagram(url) {
             type: '',
             url: '',
             thumbnail: '',
+            thumbnails: [],
+            videoVersions: [],
+            dashVideos: [],
             items: [],
+            videoDuration: 0,
+            musicInfo: null,
             metadata: {
+                id: item.id,
+                code: item.code,
                 username: item.user?.username || 'N/A',
+                fullName: item.user?.full_name || '',
+                userId: item.user?.pk || '',
+                verified: item.user?.is_verified || false,
+                profilePic: item.user?.profile_pic_url || '',
+                profilePicHD: item.user?.hd_profile_pic_url_info?.url || '',
                 title: item.caption?.text || '',
                 like_count: item.like_count || 0,
                 comment_count: item.comment_count || 0,
+                view_count: item.view_count || 0,
+                play_count: item.play_count || 0,
                 taken_at: item.taken_at || 0,
+                mediaType: item.media_type,
+                productType: item.product_type || '',
+                hasAudio: item.has_audio || false,
                 comments: []
             }
         };
 
-        // Get top comments
+        // Get detailed comments with user info
         if (item.preview_comments) {
             resultData.metadata.comments = item.preview_comments.slice(0, 5).map(comment => ({
+                id: comment.pk,
                 username: comment.user.username,
+                userId: comment.user.pk,
                 text: comment.text,
-                verified: comment.user.is_verified
+                verified: comment.user.is_verified,
+                hasLiked: comment.has_liked_comment
             }));
         }
 
@@ -135,7 +155,28 @@ async function instagram(url) {
         // Process Single Video
         else if (mediaType === 2) {
             resultData.type = 'video';
-            resultData.thumbnail = item.image_versions2?.candidates?.[0]?.url || '';
+            
+            // Get all thumbnails
+            const thumbnails = (item.image_versions2?.candidates || []).map(thumb => ({
+                url: thumb.url,
+                width: thumb.width,
+                height: thumb.height,
+                resolution: `${thumb.width}x${thumb.height}`
+            }));
+            
+            resultData.thumbnail = thumbnails[0]?.url || '';
+            resultData.thumbnails = thumbnails;
+            
+            // Get all video versions
+            const videoVersions = (item.video_versions || []).map(vid => ({
+                url: vid.url,
+                width: vid.width,
+                height: vid.height,
+                type: vid.type,
+                resolution: `${vid.width}x${vid.height}`
+            }));
+            
+            resultData.videoVersions = videoVersions;
             
             const dashXml = item.video_dash_manifest;
             
@@ -170,13 +211,18 @@ async function instagram(url) {
                                 bandwidth: parseInt(rep['@_bandwidth']) || 0,
                                 width: rep['@_width'],
                                 height: rep['@_height'],
+                                qualityLabel: rep['@_FBQualityLabel'] || '',
+                                resolution: `${rep['@_width']}x${rep['@_height']}`,
+                                codecs: rep['@_codecs'] || '',
+                                mimeType: rep['@_mimeType'] || ''
                             });
                         });
                     });
 
                     videoTracks.sort((a, b) => b.bandwidth - a.bandwidth);
-                    const videoHD = videoTracks[0];
+                    resultData.dashVideos = videoTracks;
                     
+                    const videoHD = videoTracks[0];
                     if (videoHD) {
                         resultData.url = videoHD.url;
                     }
@@ -184,13 +230,24 @@ async function instagram(url) {
             }
             
             // Fallback to video_versions if DASH not available or failed
-            if (!resultData.url) {
-                const videoVersions = item.video_versions || [];
+            if (!resultData.url && videoVersions.length > 0) {
                 const videoHD = videoVersions.sort((a, b) => b.width - a.width)[0];
-                
-                if (videoHD) {
-                    resultData.url = videoHD.url;
-                }
+                resultData.url = videoHD.url;
+            }
+            
+            // Add music/audio info
+            if (item.clips_metadata?.music_info) {
+                resultData.musicInfo = {
+                    title: item.clips_metadata.music_info.music_asset_info?.title || '',
+                    artist: item.clips_metadata.music_info.music_asset_info?.display_artist || '',
+                    audioClusterId: item.clips_metadata.music_info.music_asset_info?.audio_cluster_id || '',
+                    isExplicit: item.clips_metadata.music_info.music_asset_info?.is_explicit || false
+                };
+            }
+            
+            // Add video duration
+            if (item.video_duration) {
+                resultData.videoDuration = item.video_duration;
             }
         }
 
@@ -251,5 +308,82 @@ export default async function handler(req, res) {
         console.error('API Error:', error);
         return res.status(500).json({ error: 'Internal server error: ' + error.message });
     }
-                           }
-              
+}
+;
+            }
+            
+            // Add music/audio info
+            if (item.clips_metadata?.music_info) {
+                resultData.musicInfo = {
+                    title: item.clips_metadata.music_info.music_asset_info?.title || '',
+                    artist: item.clips_metadata.music_info.music_asset_info?.display_artist || '',
+                    audioClusterId: item.clips_metadata.music_info.music_asset_info?.audio_cluster_id || '',
+                    isExplicit: item.clips_metadata.music_info.music_asset_info?.is_explicit || false
+                };
+            }
+            
+            // Add video duration
+            if (item.video_duration) {
+                resultData.videoDuration = item.video_duration;
+            }
+        }
+
+        return {
+            status: true,
+            result: resultData
+        };
+
+    } catch (error) {
+        return { status: false, error: error.message };
+    }
+}
+
+// Vercel Serverless Function Handler
+export default async function handler(req, res) {
+    // Set CORS headers
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader(
+        'Access-Control-Allow-Headers',
+        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    );
+
+    // Handle OPTIONS request for CORS preflight
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+
+    // Only allow POST requests
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+    }
+
+    try {
+        const { url } = req.body;
+
+        if (!url) {
+            return res.status(400).json({ error: 'URL parameter is required' });
+        }
+
+        // Validate Instagram URL
+        const instagramUrlPattern = /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[\w-]+/;
+        if (!instagramUrlPattern.test(url)) {
+            return res.status(400).json({ error: 'Invalid Instagram URL' });
+        }
+
+        const result = await instagram(url);
+
+        if (!result.status) {
+            return res.status(400).json({ error: result.error });
+        }
+
+        return res.status(200).json(result.result);
+
+    } catch (error) {
+        console.error('API Error:', error);
+        return res.status(500).json({ error: 'Internal server error: ' + error.message });
+    }
+                      }
+                      
