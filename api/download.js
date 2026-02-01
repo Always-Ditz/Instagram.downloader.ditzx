@@ -28,12 +28,13 @@ export default async function handler(req, res) {
     // Fetch the media file with streaming
     const response = await fetch(decodedUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': decodedUrl.includes('sssinstagram') ? 'https://sssinstagram.com/' : 'https://www.instagram.com/',
-        'Origin': decodedUrl.includes('sssinstagram') ? 'https://sssinstagram.com' : 'https://www.instagram.com',
-        'Accept': '*/*'
-      },
-      redirect: 'follow' // Follow redirects from sssinstagram proxy
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+        'Referer': 'https://www.instagram.com/',
+        'Origin': 'https://www.instagram.com',
+        'Accept': '*/*',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
     });
 
     if (!response.ok) {
@@ -51,7 +52,7 @@ export default async function handler(req, res) {
       extension = 'mp4';
       contentType = 'video/mp4';
     } else if (type === 'image' || contentType.includes('image')) {
-      // Detect image format from content-type or URL
+      // Detect image format from content-type
       if (contentType.includes('png')) {
         extension = 'png';
         contentType = 'image/png';
@@ -65,88 +66,66 @@ export default async function handler(req, res) {
         extension = 'jpg';
         contentType = 'image/jpeg';
       }
-    } else {
-      // Auto-detect from first few bytes
-      const reader = response.body.getReader();
-      const { value: chunk } = await reader.read();
-      
-      if (chunk) {
-        const signature = Buffer.from(chunk).slice(4, 8).toString();
-        if (signature === 'ftyp') {
-          extension = 'mp4';
-          contentType = 'video/mp4';
-        }
-      }
-      
-      // Re-fetch since we consumed the stream
-      reader.releaseLock();
-      const newResponse = await fetch(decodedUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0',
-          'Referer': 'https://www.instagram.com/'
-        }
-      });
-      
-      // Use the new response for streaming
-      return streamResponse(newResponse, res, contentType, extension);
     }
 
-    return streamResponse(response, res, contentType, extension);
+    // Generate filename with timestamp
+    const timestamp = Date.now();
+    const filename = `instagram_${timestamp}.${extension}`;
+
+    // Set response headers for download
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    
+    // Get content length if available
+    const contentLength = response.headers.get('content-length');
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+
+    // Stream the response
+    if (response.body) {
+      const reader = response.body.getReader();
+      
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          
+          if (done) break;
+          
+          // Write chunk to response
+          res.write(Buffer.from(value));
+        }
+        
+        res.end();
+      } catch (streamError) {
+        console.error('Streaming error:', streamError);
+        if (!res.headersSent) {
+          res.status(500).json({ 
+            error: 'Streaming failed',
+            message: streamError.message 
+          });
+        } else {
+          res.end();
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    } else {
+      // Fallback: buffer entire response
+      const buffer = await response.arrayBuffer();
+      res.send(Buffer.from(buffer));
+    }
 
   } catch (error) {
     console.error('Error in download.js:', error);
     
-    return res.status(500).json({ 
-      error: 'Internal server error',
-      message: error.message 
-    });
-  }
-}
-
-async function streamResponse(fetchResponse, res, contentType, extension) {
-  // Generate filename
-  const timestamp = Date.now();
-  const filename = `instagram_${timestamp}.${extension}`;
-
-  // Set response headers for download
-  res.setHeader('Content-Type', contentType);
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.setHeader('Cache-Control', 'no-cache');
-  
-  // Get content length if available
-  const contentLength = fetchResponse.headers.get('content-length');
-  if (contentLength) {
-    res.setHeader('Content-Length', contentLength);
-  }
-
-  // Stream the response chunk by chunk
-  const reader = fetchResponse.body.getReader();
-  
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      
-      if (done) {
-        break;
-      }
-      
-      // Write chunk to response
-      res.write(Buffer.from(value));
-    }
-    
-    res.end();
-  } catch (streamError) {
-    console.error('Streaming error:', streamError);
     if (!res.headersSent) {
-      res.status(500).json({ 
-        error: 'Streaming failed',
-        message: streamError.message 
+      return res.status(500).json({ 
+        error: 'Internal server error',
+        message: error.message 
       });
-    } else {
-      res.end();
     }
-  } finally {
-    reader.releaseLock();
   }
-  }
-          
+    }
+        
