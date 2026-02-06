@@ -490,55 +490,51 @@
         function displayPreview(data) {
             let html = '';
 
-            if (data.metadata) {
-                const m = data.metadata;
+            // Display metadata
+            if (data.metadata || data.author) {
+                const m = data.metadata || {};
+                const a = data.author || {};
                 html += `
                     <div class="metadata-card">
                         <div class="user-info">
-                            ${m.profilePicHD || m.profilePic ? `<img src="${m.profilePicHD || m.profilePic}" class="profile-pic">` : ''}
+                            ${a.profilePic ? `<img src="${a.profilePic}" class="profile-pic">` : ''}
                             <div class="user-details">
-                                <h3>@${m.username}${m.verified ? ' ✓' : ''}</h3>
-                                ${m.fullName ? `<p>${m.fullName}</p>` : ''}
+                                <h3>@${a.username}${a.verified ? ' ✓' : ''}</h3>
+                                ${a.fullName ? `<p>${a.fullName}</p>` : ''}
                             </div>
                         </div>
-                        ${m.title ? `<div class="caption">${m.title}</div>` : ''}
+                        ${m.caption ? `<div class="caption">${m.caption}</div>` : ''}
                         <div class="stats">
-                            ${m.like_count ? `<div class="stat-item"><svg fill="#ff3366" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg><span>${m.like_count.toLocaleString()}</span></div>` : ''}
-                            ${m.comment_count ? `<div class="stat-item"><svg fill="#aaa" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg><span>${m.comment_count.toLocaleString()}</span></div>` : ''}
-                            ${m.view_count || m.play_count ? `<div class="stat-item"><svg fill="#aaa" viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg><span>${(m.view_count || m.play_count).toLocaleString()}</span></div>` : ''}
+                            ${m.likeCount ? `<div class="stat-item"><svg fill="#ff3366" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg><span>${m.likeCount.toLocaleString()}</span></div>` : ''}
+                            ${m.commentCount ? `<div class="stat-item"><svg fill="#aaa" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg><span>${m.commentCount.toLocaleString()}</span></div>` : ''}
+                            ${m.viewCount ? `<div class="stat-item"><svg fill="#aaa" viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg><span>${m.viewCount.toLocaleString()}</span></div>` : ''}
                         </div>
-                        ${m.comments && m.comments.length ? `
-                            <div class="comments-section">
-                                <h4 style="margin-bottom:10px">Top Comments</h4>
-                                ${m.comments.map(c => `<div class="comment"><div class="comment-author">@${c.username}${c.verified ? ' ✓' : ''}</div><div class="comment-text">${c.text}</div></div>`).join('')}
-                            </div>
-                        ` : ''}
                     </div>
                 `;
             }
 
-            if (data.type === 'image') {
-                html += `<div class="media-container"><img src="${data.url}"><br><button class="download-btn" onclick="downloadFile('${data.url}', 'image')">Download HD Image</button></div>`;
-            } else if (data.type === 'video') {
-                // Use videoVersions (with audio) instead of dashVideos
-                const videoUrl = data.url;
+            // Display video with audio
+            if (data.rawItem && data.rawItem.video_versions && data.rawItem.video_versions.length > 0) {
+                const videoVersions = data.rawItem.video_versions;
+                const videoUrl = videoVersions[0].url;
+                
                 html += `
                     <div class="media-container">
-                        <video id="main-video" controls poster="${data.thumbnail}">
+                        <video id="main-video" controls>
                             <source src="${videoUrl}" type="video/mp4">
                         </video>
                         <br>
                 `;
                 
-                // Quality selector using videoVersions (raw video with audio)
-                if (data.videoVersions && data.videoVersions.length > 1) {
+                // Quality selector if multiple versions
+                if (videoVersions.length > 1) {
                     html += `
                         <div class="quality-selector">
-                            <label style="font-size:0.9rem;margin-bottom:5px;display:block">Select Quality:</label>
+                            <label style="font-size:0.9rem;margin-bottom:5px;display:block">Video Quality:</label>
                             <select id="video-quality" onchange="changeVideoQuality(this.value)">
                     `;
-                    data.videoVersions.forEach((v, i) => {
-                        html += `<option value="${v.url}" ${i === 0 ? 'selected' : ''}>${v.resolution} - ${v.type || 'MP4'}</option>`;
+                    videoVersions.forEach((v, i) => {
+                        html += `<option value="${v.url}" ${i === 0 ? 'selected' : ''}>${v.width}x${v.height} - ${v.type || 'MP4'}</option>`;
                     });
                     html += `
                             </select>
@@ -547,16 +543,18 @@
                 }
                 
                 html += `<button class="download-btn" id="video-download-btn" onclick="downloadFile('${videoUrl}', 'video')">Download Video</button>`;
-                if (data.musicInfo) html += `<p style="margin-top:10px;color:#aaa;font-size:0.9rem">🎵 ${data.musicInfo.title} - ${data.musicInfo.artist}</p>`;
-                html += `</div>`;
-            } else if (data.type === 'carousel') {
-                html += `<h3 style="margin-bottom:15px;text-align:center">Carousel (${data.items.length} items)</h3><div class="carousel-grid">`;
-                data.items.forEach((item, i) => {
-                    html += `<div class="carousel-item">`;
-                    if (item.type === 'image') html += `<img src="${item.url}"><button class="download-btn" onclick="downloadFile('${item.url}', 'image')">Download</button>`;
-                    else html += `<video controls><source src="${item.url}" type="video/mp4"></video><button class="download-btn" onclick="downloadFile('${item.url}', 'video')">Download</button>`;
-                    html += `</div>`;
-                });
+                
+                // Audio download button
+                if (data.audios && data.audios.length > 0) {
+                    const audioUrl = data.audios[0].url;
+                    html += `<button class="download-btn" onclick="downloadFile('${audioUrl}', 'audio')" style="background: #1DB954; border-color: #1DB954;">🎵 Download Audio</button>`;
+                }
+                
+                // Music info
+                if (data.musicInfo) {
+                    html += `<p style="margin-top:10px;color:#aaa;font-size:0.9rem">🎵 ${data.musicInfo.title} - ${data.musicInfo.displayArtist}</p>`;
+                }
+                
                 html += `</div>`;
             }
 
@@ -586,4 +584,5 @@
         });
     </script>
 </body>
-</html>
+    </html>
+                
