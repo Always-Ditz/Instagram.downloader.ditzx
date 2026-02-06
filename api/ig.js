@@ -1,6 +1,6 @@
 /***
-  @ Instagram Downloader API - Vercel Serverless Function
-  @ Author: Shannz
+  @ Instagram Downloader - Custom Metadata
+  @ Author: Shannz (Modified)
 ***/
 
 import axios from 'axios';
@@ -57,211 +57,114 @@ async function instagram(url) {
 
         if (!item) throw new Error('Struct item tidak ditemukan dalam JSON.');
 
-        // Determine media type
-        const mediaType = item.media_type; // 1 = Image, 2 = Video, 8 = Carousel
-        const isCarousel = item.carousel_media || mediaType === 8;
+        // Parse DASH manifest for audio extraction
+        let audioTracks = [];
+        const dashXml = item.video_dash_manifest;
         
-        let resultData = {
-            type: '',
-            url: '',
-            thumbnail: '',
-            thumbnails: [],
-            videoVersions: [],
-            dashVideos: [],
-            items: [],
-            videoDuration: 0,
-            musicInfo: null,
-            metadata: {
-                id: item.id,
-                code: item.code,
-                username: item.user?.username || 'N/A',
-                fullName: item.user?.full_name || '',
-                userId: item.user?.pk || '',
-                verified: item.user?.is_verified || false,
-                profilePic: item.user?.profile_pic_url || '',
-                profilePicHD: item.user?.hd_profile_pic_url_info?.url || '',
-                title: item.caption?.text || '',
-                like_count: item.like_count || 0,
-                comment_count: item.comment_count || 0,
-                view_count: item.view_count || 0,
-                play_count: item.play_count || 0,
-                taken_at: item.taken_at || 0,
-                mediaType: item.media_type,
-                productType: item.product_type || '',
-                hasAudio: item.has_audio || false,
-                comments: []
-            }
-        };
-
-        // Get detailed comments with user info
-        if (item.preview_comments) {
-            resultData.metadata.comments = item.preview_comments.slice(0, 5).map(comment => ({
-                id: comment.pk,
-                username: comment.user.username,
-                userId: comment.user.pk,
-                text: comment.text,
-                verified: comment.user.is_verified,
-                hasLiked: comment.has_liked_comment
-            }));
-        }
-
-        // Process Carousel (multiple images/videos)
-        if (isCarousel && item.carousel_media) {
-            resultData.type = 'carousel';
-            
-            for (const carouselItem of item.carousel_media) {
-                if (carouselItem.media_type === 1) {
-                    // Image in carousel
-                    const imageHD = carouselItem.image_versions2?.candidates?.[0];
-                    resultData.items.push({
-                        type: 'image',
-                        url: imageHD?.url || '',
-                        width: imageHD?.width || 0,
-                        height: imageHD?.height || 0
-                    });
-                } else if (carouselItem.media_type === 2) {
-                    // Video in carousel
-                    const videoVersions = carouselItem.video_versions || [];
-                    const videoHD = videoVersions.sort((a, b) => b.width - a.width)[0];
-                    
-                    resultData.items.push({
-                        type: 'video',
-                        url: videoHD?.url || '',
-                        width: videoHD?.width || 0,
-                        height: videoHD?.height || 0,
-                        duration: carouselItem.video_duration || 0
-                    });
-                }
-            }
-            
-            // Set thumbnail from first item
-            if (resultData.items.length > 0) {
-                if (resultData.items[0].type === 'image') {
-                    resultData.thumbnail = resultData.items[0].url;
-                } else {
-                    resultData.thumbnail = item.image_versions2?.candidates?.[0]?.url || '';
-                }
-            }
-        }
-        // Process Single Image
-        else if (mediaType === 1) {
-            resultData.type = 'image';
-            const imageCandidates = item.image_versions2?.candidates || [];
-            const imageHD = imageCandidates.sort((a, b) => b.width - a.width)[0];
-            
-            resultData.url = imageHD?.url || '';
-            resultData.thumbnail = imageHD?.url || '';
-        }
-        // Process Single Video
-        else if (mediaType === 2) {
-            resultData.type = 'video';
-            
-            // Get all thumbnails
-            const thumbnails = (item.image_versions2?.candidates || []).map(thumb => ({
-                url: thumb.url,
-                width: thumb.width,
-                height: thumb.height,
-                resolution: `${thumb.width}x${thumb.height}`
-            }));
-            
-            resultData.thumbnail = thumbnails[0]?.url || '';
-            resultData.thumbnails = thumbnails;
-            
-            // Get all video versions
-            const videoVersions = (item.video_versions || []).map(vid => ({
-                url: vid.url,
-                width: vid.width,
-                height: vid.height,
-                type: vid.type,
-                resolution: `${vid.width}x${vid.height}`
-            }));
-            
-            resultData.videoVersions = videoVersions;
-            
-            const dashXml = item.video_dash_manifest;
-            
-            if (dashXml) {
-                // Parse DASH manifest for HD video
+        if (dashXml) {
+            try {
                 const parser = new XMLParser({ ignoreAttributes: false });
-                let manifest;
-                try {
-                    manifest = parser.parse(dashXml);
-                } catch (xmlError) {
-                    throw new Error(`Gagal parsing DASH manifest: ${xmlError.message}`);
-                }
-
+                const manifest = parser.parse(dashXml);
                 const period = manifest.MPD?.Period;
+
                 if (period) {
                     const adaptationSets = Array.isArray(period.AdaptationSet) ? period.AdaptationSet : [period.AdaptationSet];
-                    let videoTracks = [];
 
                     adaptationSets.forEach((set) => {
                         if (!set) return;
 
-                        const isVideo = set['@_contentType'] === 'video';
-                        if (!isVideo) return;
-                        
+                        const isAudio = set['@_contentType'] === 'audio';
                         const representations = Array.isArray(set.Representation) ? set.Representation : [set.Representation];
 
                         representations.forEach((rep) => {
                             if (!rep) return;
 
-                            videoTracks.push({
-                                url: rep.BaseURL,
-                                bandwidth: parseInt(rep['@_bandwidth']) || 0,
-                                width: rep['@_width'],
-                                height: rep['@_height'],
-                                qualityLabel: rep['@_FBQualityLabel'] || '',
-                                resolution: `${rep['@_width']}x${rep['@_height']}`,
-                                codecs: rep['@_codecs'] || '',
-                                mimeType: rep['@_mimeType'] || ''
-                            });
+                            if (isAudio) {
+                                audioTracks.push({
+                                    url: rep.BaseURL,
+                                    bandwidth: parseInt(rep['@_bandwidth']) || 0,
+                                    codecs: rep['@_codecs'] || '',
+                                    mimeType: rep['@_mimeType'] || '',
+                                    audioSampleRate: rep['@_audioSamplingRate'] || '',
+                                    id: rep['@_id'] || ''
+                                });
+                            }
                         });
                     });
-
-                    videoTracks.sort((a, b) => b.bandwidth - a.bandwidth);
-                    resultData.dashVideos = videoTracks;
-                    
-                    const videoHD = videoTracks[0];
-                    if (videoHD) {
-                        resultData.url = videoHD.url;
-                    }
                 }
-            }
-            
-            // Fallback to video_versions if DASH not available or failed
-            if (!resultData.url && videoVersions.length > 0) {
-                const videoHD = videoVersions.sort((a, b) => b.width - a.width)[0];
-                resultData.url = videoHD.url;
-            }
-            
-            // Add music/audio info
-            if (item.clips_metadata?.music_info) {
-                resultData.musicInfo = {
-                    title: item.clips_metadata.music_info.music_asset_info?.title || '',
-                    artist: item.clips_metadata.music_info.music_asset_info?.display_artist || '',
-                    audioClusterId: item.clips_metadata.music_info.music_asset_info?.audio_cluster_id || '',
-                    isExplicit: item.clips_metadata.music_info.music_asset_info?.is_explicit || false
-                };
-            }
-            
-            // Add video duration
-            if (item.video_duration) {
-                resultData.videoDuration = item.video_duration;
+            } catch (xmlError) {
+                console.error('DASH parsing error:', xmlError.message);
             }
         }
 
+        // Build custom result
+        const finalResult = {
+            metadata: {
+                id: item.id,
+                code: item.code,
+                caption: item.caption?.text || '',
+                createTime: new Date(item.taken_at * 1000).toLocaleString(),
+                takenAt: item.taken_at,
+                mediaType: item.media_type,
+                productType: item.product_type,
+                likeCount: item.like_count,
+                commentCount: item.comment_count,
+                viewCount: item.view_count,
+                hasAudio: item.has_audio,
+                organicTrackingToken: item.organic_tracking_token,
+            },
+            author: {
+                id: item.user?.pk,
+                username: item.user?.username || 'N/A',
+                fullName: item.user?.full_name || '',
+                profilePic: item.user?.hd_profile_pic_url_info?.url || item.user?.profile_pic_url || '',
+                verified: item.user?.is_verified,
+                isPrivate: item.user?.is_private,
+                accountBadges: item.user?.account_badges || [],
+                categoryName: item.user?.category_name || '',
+            },
+            rawItem: {
+                code: item.code,
+                pk: item.pk,
+                id: item.id,
+                ad_id: item.ad_id,
+                taken_at: item.taken_at,
+                inventory_source: item.inventory_source,
+                video_versions: item.video_versions || [],
+            },
+            audios: audioTracks,
+            originalWidth: item.original_width,
+            originalHeight: item.original_height,
+            musicInfo: item.clips_metadata?.music_info ? {
+                title: item.clips_metadata.music_info.music_asset_info?.title,
+                displayArtist: item.clips_metadata.music_info.music_asset_info?.display_artist,
+            } : null,
+            location: item.location ? {
+                name: item.location.name,
+                address: item.location.address,
+                city: item.location.city,
+                lat: item.location.lat,
+                lng: item.location.lng,
+            } : null,
+            accessibility: {
+                caption: item.accessibility_caption || ''
+            },
+            is_paid_partnership: item.is_paid_partnership || false,
+            sponsor_tags: item.sponsor_tags || null,
+        };
+
         return {
             status: true,
-            result: resultData
+            result: finalResult
         };
 
     } catch (error) {
+        console.error('Error Main Process:', error.message);
         return { status: false, error: error.message };
     }
 }
 
-// Vercel Serverless Function Handler
+// Vercel Serverless Handler
 export default async function handler(req, res) {
     // Set CORS headers
     res.setHeader('Access-Control-Allow-Credentials', true);
@@ -272,13 +175,13 @@ export default async function handler(req, res) {
         'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
     );
 
-    // Handle OPTIONS request for CORS preflight
+    // Handle OPTIONS request
     if (req.method === 'OPTIONS') {
         res.status(200).end();
         return;
     }
 
-    // Only allow POST requests
+    // Only allow POST
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed. Use POST.' });
     }
@@ -308,82 +211,5 @@ export default async function handler(req, res) {
         console.error('API Error:', error);
         return res.status(500).json({ error: 'Internal server error: ' + error.message });
     }
-}
-;
-            }
-            
-            // Add music/audio info
-            if (item.clips_metadata?.music_info) {
-                resultData.musicInfo = {
-                    title: item.clips_metadata.music_info.music_asset_info?.title || '',
-                    artist: item.clips_metadata.music_info.music_asset_info?.display_artist || '',
-                    audioClusterId: item.clips_metadata.music_info.music_asset_info?.audio_cluster_id || '',
-                    isExplicit: item.clips_metadata.music_info.music_asset_info?.is_explicit || false
-                };
-            }
-            
-            // Add video duration
-            if (item.video_duration) {
-                resultData.videoDuration = item.video_duration;
-            }
-        }
-
-        return {
-            status: true,
-            result: resultData
-        };
-
-    } catch (error) {
-        return { status: false, error: error.message };
-    }
-}
-
-// Vercel Serverless Function Handler
-export default async function handler(req, res) {
-    // Set CORS headers
-    res.setHeader('Access-Control-Allow-Credentials', true);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-    res.setHeader(
-        'Access-Control-Allow-Headers',
-        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-    );
-
-    // Handle OPTIONS request for CORS preflight
-    if (req.method === 'OPTIONS') {
-        res.status(200).end();
-        return;
-    }
-
-    // Only allow POST requests
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed. Use POST.' });
-    }
-
-    try {
-        const { url } = req.body;
-
-        if (!url) {
-            return res.status(400).json({ error: 'URL parameter is required' });
-        }
-
-        // Validate Instagram URL
-        const instagramUrlPattern = /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[\w-]+/;
-        if (!instagramUrlPattern.test(url)) {
-            return res.status(400).json({ error: 'Invalid Instagram URL' });
-        }
-
-        const result = await instagram(url);
-
-        if (!result.status) {
-            return res.status(400).json({ error: result.error });
-        }
-
-        return res.status(200).json(result.result);
-
-    } catch (error) {
-        console.error('API Error:', error);
-        return res.status(500).json({ error: 'Internal server error: ' + error.message });
-    }
-                      }
-                      
+              }
+              
